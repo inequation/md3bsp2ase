@@ -1,0 +1,7 @@
+Here's a tiny utility that converts MD3 models and drawable geometry from the game levels (BSP files) to the ASE format, so that they may be imported into UDK, for instance.
+
+Will work with other id Tech 3 games, provided you swap in the corresponding qfiles.h header.
+
+Enjoy!
+
+Leszek
