@@ -7,6 +7,7 @@ Code in the public domain
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 typedef float vec_t;
 typedef vec_t vec2_t[2];
@@ -15,6 +16,16 @@ typedef vec_t vec4_t[4];
 typedef vec_t vec5_t[5];
 typedef unsigned char byte;
 #include "qfiles.h"
+
+#ifndef BYTE_ORDER
+	#if !defined(LITTLE_ENDIAN) && !defined(BIG_ENDIAN)
+		#define LITTLE_ENDIAN	1
+		#define BIG_ENDIAN		2
+	#endif
+
+	// if not provided by system headers, you should #define byte order here
+	#define BYTE_ORDER			LITTLE_ENDIAN
+#endif // BYTE ORDER
 
 #if BYTE_ORDER == BIG_ENDIAN
 	#define little_short(x)		((((x) << 8) & 0xFF00) | (((x) >> 8) & 0x00FF))
@@ -28,38 +39,54 @@ typedef unsigned char byte;
 #endif // BIG_ENDIAN
 
 int convert_md3(const char *in_name, FILE *in, FILE *out, int frame) {
-	md3Header_t md3;
-	md3Surface_t surf;
-	md3XyzNormal_t vert;
-	md3Triangle_t tri;
-	md3St_t st;
-	int surf_start, i, j;
+	md3Header_t *md3;
+	md3Shader_t *shader;
+	md3Surface_t *surf;
+	md3XyzNormal_t *vert;
+	md3Triangle_t *tri;
+	md3St_t *st;
+	int i, j;
+	unsigned char *buf;
+
+	// load the file contents into a buffer
+	fseek(in, 0, SEEK_END);
+	i = ftell(in);
+	fseek(in, 0, SEEK_SET);
+	buf = malloc(i);
+	if (!buf) {
+		printf("Memory allocation failed\n");
+		return 17;
+	}
+	if (fread(buf, 1, i, in) != (size_t)i) {
+		printf("Failed to read file (%d bytes) into buffer\n", i);
+		return 18;
+	}
 
 	// MD3 sanity checking
+	md3 = (md3Header_t *)buf;
 
-	if (!fread(&md3, sizeof(md3), 1, in)
-		|| little_long(md3.ident != MD3_IDENT)) {
+	if (little_long(md3->ident != MD3_IDENT)) {
 		printf("Not a valid MD3 file\n");
 		return 6;
 	}
 
-	if (little_long(md3.version > MD3_VERSION)) {
+	if (little_long(md3->version > MD3_VERSION)) {
 		printf("Unsupported MD3 version\n");
 		return 7;
 	}
 
-	if (little_long(md3.numFrames) < 1) {
+	if (little_long(md3->numFrames) < 1) {
 		printf("MD3 has no frames\n");
 		return 8;
 	}
 
-	if (little_long(md3.numFrames) <= frame) {
+	if (little_long(md3->numFrames) <= frame) {
 		printf("Cannot extract frame #%d from a model that has %d frames\n",
-			frame, little_long(md3.numFrames));
+			frame, little_long(md3->numFrames));
 		return 9;
 	}
 
-	if (little_long(md3.numSurfaces) < 1) {
+	if (little_long(md3->numSurfaces) < 1) {
 		printf("MD3 has no surfaces\n");
 		return 10;
 	}
@@ -80,20 +107,68 @@ int convert_md3(const char *in_name, FILE *in, FILE *out, int frame) {
 		"}\n\n",
 		__DATE__, in_name);
 
-	// iterate over all the MD3 surfaces
-	surf_start = little_long(md3.ofsSurfaces);
-	for (i = 0; i < little_long(md3.numSurfaces);
-		++i, surf_start += little_long(surf.ofsEnd)) {
+	// material placeholders - iterate over all the MD3 surfaces
+	fprintf(out,
+		"\n"
+		"*MATERIAL_LIST {\n"
+			"\t*MATERIAL_COUNT %d\n",
+		little_long(md3->numSurfaces));
+	for (i = 0, surf = (md3Surface_t *)(buf + little_long(md3->ofsSurfaces));
+		i < little_long(md3->numSurfaces);
+		++i, surf += little_long(surf->ofsEnd)) {
+		shader = (md3Shader_t *)(((unsigned char *)surf)
+			+ little_long(surf->ofsShaders));
+		// begin ASE material
+		fprintf(out,
+			"\t*MATERIAL %d {\n"
+				"\t\t*MATERIAL_NAME \"Material #%d\"\n"
+				"\t\t*MATERIAL_CLASS \"Standard\"\n"
+				"\t\t*MATERIAL_AMBIENT  0.1791 0.0654 0.0654\n"
+				"\t\t*MATERIAL_DIFFUSE  0.5373 0.1961 0.1961\n"
+				"\t\t*MATERIAL_SPECULAR 0.9000 0.9000 0.9000\n"
+				"\t\t*MATERIAL_SHINE 0.2500\n"
+				"\t\t*MATERIAL_SHINESTRENGTH 0.0500\n"
+				"\t\t*MATERIAL_TRANSPARENCY 0.0000\n"
+				"\t\t*MATERIAL_WIRESIZE 1.0000\n"
+				"\t\t*MATERIAL_SHADING Blinn\n"
+				"\t\t*MATERIAL_XP_FALLOFF 0.0000\n"
+				"\t\t*MATERIAL_SELFILLUM 0.0000\n"
+				"\t\t*MATERIAL_FALLOFF In\n"
+				"\t\t*MATERIAL_XP_TYPE Filter\n"
+				"\t\t*MAP_DIFFUSE {\n"
+					"\t\t\t*MAP_NAME \"Map #%d\"\n"
+					"\t\t\t*MAP_CLASS \"Bitmap\"\n"
+					"\t\t\t*MAP_SUBNO 1\n"
+					"\t\t\t*MAP_AMOUNT 1.0000\n"
+					"\t\t\t*BITMAP \"%s\"\n"
+					"\t\t\t*MAP_TYPE Screen\n"
+					"\t\t\t*UVW_U_OFFSET 0.0000\n"
+					"\t\t\t*UVW_V_OFFSET 0.0000\n"
+					"\t\t\t*UVW_U_TILING 1.0000\n"
+					"\t\t\t*UVW_V_TILING 1.0000\n"
+					"\t\t\t*UVW_ANGLE 0.0000\n"
+					"\t\t\t*UVW_BLUR 1.0000\n"
+					"\t\t\t*UVW_BLUR_OFFSET 0.0000\n"
+					"\t\t\t*UVW_NOUSE_AMT 1.0000\n"
+					"\t\t\t*UVW_NOISE_SIZE 1.0000\n"
+					"\t\t\t*UVW_NOISE_LEVEL 1\n"
+					"\t\t\t*UVW_NOISE_PHASE 0.0000\n"
+					"\t\t\t*BITMAP_FILTER Pyramidal\n"
+				"\t\t}\n"
+			"\t}\n",
+			i, i + 1, i + 1, shader->name);
+	}
+	fprintf(out,
+		"}\n");
 
-		fseek(in, surf_start, SEEK_SET);
-		if (!fread(&surf, sizeof(surf), 1, in)) {
-			printf("Failed to read surface #%d data\n", i);
-			return 11;
-		}
+	// geometry - iterate over all the MD3 surfaces
+	for (i = 0, surf = (md3Surface_t *)(buf + little_long(md3->ofsSurfaces));
+		i < little_long(md3->numSurfaces);
+		++i, surf += little_long(surf->ofsEnd)) {
 
 		printf("Processing surface #%d, \"%s\": %d vertices, %d triangles\n",
-			i, surf.name, little_long(surf.numVerts),
-			little_long(surf.numTriangles));
+			i, surf->name, little_long(surf->numVerts),
+			little_long(surf->numTriangles));
 
 		// begin ASE geom object
 		fprintf(out,
@@ -121,23 +196,21 @@ int convert_md3(const char *in_name, FILE *in, FILE *out, int frame) {
 					"\t\t*TIMEVALUE 0\n"
 					"\t\t*MESH_NUMVERTEX %d\n"
 					"\t\t*MESH_NUMFACES %d\n",
-			surf.name, surf.name, surf.numVerts, surf.numTriangles);
+			surf->name, surf->name, little_long(surf->numVerts),
+				little_long(surf->numTriangles));
 
 		// output the vertex list
 		fprintf(out,
 					"\t\t*MESH_VERTEX_LIST {\n");
-		fseek(in, surf_start + little_long(surf.ofsXyzNormals)
-			+ frame * little_long(surf.numVerts), SEEK_SET);
-		for (j = 0; j < little_long(surf.numVerts); ++j) {
-			if (!fread(&vert, sizeof(vert), 1, in)) {
-				printf("Failed to read vertex #%d in surface #%d\n", j, i);
-				return 12;
-			}
+		vert = (md3XyzNormal_t *)(((unsigned char *)surf)
+			+ little_long(surf->ofsXyzNormals)
+			+ frame * little_long(surf->numVerts));
+		for (j = 0; j < little_long(surf->numVerts); ++j, ++vert) {
 			fprintf(out,
 						"\t\t\t*MESH_VERTEX %d %f %f %f\n",
-				j, (float)vert.xyz[0] * MD3_XYZ_SCALE,
-					(float)vert.xyz[1] * MD3_XYZ_SCALE,
-					(float)vert.xyz[2] * MD3_XYZ_SCALE);
+				j, (float)vert->xyz[0] * MD3_XYZ_SCALE,
+					(float)vert->xyz[1] * MD3_XYZ_SCALE,
+					(float)vert->xyz[2] * MD3_XYZ_SCALE);
 		}
 		fprintf(out,
 					"\t\t}\n"
@@ -146,16 +219,14 @@ int convert_md3(const char *in_name, FILE *in, FILE *out, int frame) {
 		// output the triangle list
 		fprintf(out,
 					"\t\t*MESH_FACE_LIST {\n");
-		fseek(in, surf_start + little_long(surf.ofsTriangles), SEEK_SET);
-		for (j = 0; j < little_long(surf.numTriangles); ++j) {
-			if (!fread(&tri, sizeof(tri), 1, in)) {
-				printf("Failed to read triangle #%d in surface #%d\n", j, i);
-				return 13;
-			}
+		tri = (md3Triangle_t *)(((unsigned char *)surf)
+			+ little_long(surf->ofsTriangles));
+		for (j = 0; j < little_long(surf->numTriangles); ++j, ++tri) {
 			fprintf(out,
 						"\t\t\t*MESH_FACE %d: A: %d B: %d C: %d "
-							"AB: 1 BC: 1 CA: 1\n",
-				j, tri.indexes[0], tri.indexes[1], tri.indexes[2]);
+							"AB: 1 BC: 1 CA: 1 *MESH_SMOOTHING %d *MESH_MTLID %d\n",
+				j, little_long(tri->indexes[2]), little_long(tri->indexes[1]),
+					little_long(tri->indexes[0]), i, i);
 		}
 		fprintf(out,
 					"\t\t}\n"
@@ -163,17 +234,13 @@ int convert_md3(const char *in_name, FILE *in, FILE *out, int frame) {
 
 		// output the texture vertex list
 		fprintf(out,
-					"\t\t*MESH_TVERT_LIST {\n");
-		fseek(in, surf_start + little_long(surf.ofsSt), SEEK_SET);
-		for (j = 0; j < little_long(surf.numVerts); ++j) {
-			if (!fread(&st, sizeof(st), 1, in)) {
-				printf("Failed to read texture coordinates #%d in surface "
-					"#%d\n", j, i);
-				return 14;
-			}
+					"\t\t*MESH_TVERTLIST {\n");
+		st = (md3St_t *)(((unsigned char *)surf)
+			+ little_long(surf->ofsSt));
+		for (j = 0; j < little_long(surf->numVerts); ++j, ++st) {
 			fprintf(out,
 						"\t\t\t*MESH_TVERT %d %f %f 0.0000\n",
-				j, st.st[0], st.st[1]);
+				j, st->st[0], 1.f - st->st[1]);
 		}
 		fprintf(out,
 					"\t\t}\n"
@@ -181,34 +248,37 @@ int convert_md3(const char *in_name, FILE *in, FILE *out, int frame) {
 
 		// output the texture triangle list (same as the original triangles)
 		fprintf(out,
-					"\t\t*MESH_TFACE_LIST {\n");
-		fseek(in, surf_start + little_long(surf.ofsTriangles), SEEK_SET);
-		for (j = 0; j < little_long(surf.numTriangles); ++j) {
-			if (!fread(&tri, sizeof(tri), 1, in)) {
-				printf("Failed to read triangle #%d in surface #%d\n", j, i);
-				return 13;
-			}
+					"\t\t*MESH_TFACELIST {\n");
+		tri = (md3Triangle_t *)(((unsigned char *)surf)
+			+ little_long(surf->ofsTriangles));
+		for (j = 0; j < little_long(surf->numTriangles); ++j, ++tri) {
 			fprintf(out,
 						"\t\t\t*MESH_TFACE %d %d %d %d\n",
-				j, tri.indexes[0], tri.indexes[1], tri.indexes[2]);
+				j, tri->indexes[2], tri->indexes[1], tri->indexes[0]);
 		}
 		fprintf(out,
 					"\t\t}\n"
 			"\n");
 
-		// TODO: decode the vertex normals from polar coordinates
-		/*lat = ( newNormals[0] >> 8 ) & 0xff;
-		lng = ( newNormals[0] & 0xff );
-		lat *= ( FUNCTABLE_SIZE / 256 );
-		lng *= ( FUNCTABLE_SIZE / 256 );
-
-		// decode X as cos( lat ) * sin( long )
-		// decode Y as sin( lat ) * sin( long )
-		// decode Z as cos( long )
-
-		outNormal[0] = tr.sinTable[( lat + ( FUNCTABLE_SIZE / 4 ) ) & FUNCTABLE_MASK] * tr.sinTable[lng];
-		outNormal[1] = tr.sinTable[lat] * tr.sinTable[lng];
-		outNormal[2] = tr.sinTable[( lng + ( FUNCTABLE_SIZE / 4 ) ) & FUNCTABLE_MASK];*/
+		// output the normals
+		fprintf(out,
+					"\t\t*MESH_NORMALS {\n");
+		vert = (md3XyzNormal_t *)(((unsigned char *)surf)
+			+ little_long(surf->ofsXyzNormals)
+			+ frame * little_long(surf->numVerts));
+		for (j = 0; j < little_long(surf->numVerts); ++j, ++vert) {
+			float lat, lng;
+			lat = (vert->normal >> 8)	/ 255.f * M_PI * 2.f;
+			lng = (vert->normal & 0xFF)	/ 255.f * M_PI * 2.f;
+			// decode X as cos( lat ) * sin( long )
+			// decode Y as sin( lat ) * sin( long )
+			// decode Z as cos( long )
+			fprintf(out,
+						"\t\t\t*MESH_VERTEXNORMAL %d %f %f %f\n",
+				j, cos(lat) * sin(lng), sin(lat) * sin(lng), cos(lng));
+		}
+		fprintf(out,
+					"\t\t}\n");
 
 		// close ASE geom object
 		fprintf(out,
@@ -217,7 +287,9 @@ int convert_md3(const char *in_name, FILE *in, FILE *out, int frame) {
 				"\t*PROP_MOTIONBLUR 0\n"
 				"\t*PROP_CASTSHADOW 1\n"
 				"\t*PROP_RECVSHADOW 1\n"
-			"}\n");
+				"\t*MATERIAL_REF %d\n"
+			"}\n",
+			i);
 	}
 
 	return 0;
@@ -269,5 +341,5 @@ int main(int argc, char *argv[]) {
 	fclose(infile);
 	fclose(outfile);
 
-    return retcode;
+	return retcode;
 }
