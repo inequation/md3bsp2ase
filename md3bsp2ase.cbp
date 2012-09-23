@@ -23,7 +23,7 @@
 				<Option object_output="obj\" />
 				<Option type="1" />
 				<Option compiler="gcc" />
-				<Option parameters="m4sopmod_view_main.md3 m4sopmod.ase" />
+				<Option parameters="m4sopmod_view_main.md3 m4sopmod.obj" />
 				<Compiler>
 					<Add option="-Wextra" />
 					<Add option="-Wall" />
