@@ -24,6 +24,7 @@ typedef vec_t vec4_t[4];
 typedef vec_t vec5_t[5];
 typedef unsigned char byte;
 #include "qfiles.h"
+#include "surfaceflags.h"
 
 #ifndef BYTE_ORDER
 	#if !defined(LITTLE_ENDIAN) && !defined(BIG_ENDIAN)

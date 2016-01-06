@@ -15,6 +15,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="qfiles.h" />
+    <ClInclude Include="surfaceflags.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{D3AB9E3B-69E2-408E-A710-C19ED1E351AE}</ProjectGuid>
