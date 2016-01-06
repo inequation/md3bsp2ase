@@ -4,9 +4,19 @@ Written by Leszek Godlewski <github@inequation.org>
 Code in the public domain
 */
 
+#ifdef _MSC_VER
+	// Not the prettiest way to do it, but I can't be arsed to "securely" support MSVC.
+	#define _CRT_SECURE_NO_WARNINGS
+	#define snprintf	_snprintf
+	#define strcasecmp	_stricmp
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _USE_MATH_DEFINES
+	#define _USE_MATH_DEFINES
+#endif
 #include <math.h>
 
 typedef float vec_t;
@@ -278,8 +288,8 @@ int convert_md3_to_ase(const char *in_name, FILE *in, FILE *out, int frame) {
 			+ frame * little_long(surf->numVerts));
 		for (j = 0; j < little_long(surf->numVerts); ++j, ++vert) {
 			float lat, lng;
-			lat = (vert->normal >> 8)	/ 255.f * M_PI * 2.f;
-			lng = (vert->normal & 0xFF)	/ 255.f * M_PI * 2.f;
+			lat = (vert->normal >> 8)	/ 255.f * (float)M_PI * 2.f;
+			lng = (vert->normal & 0xFF) / 255.f * (float)M_PI * 2.f;
 			// decode X as cos( lat ) * sin( long )
 			// decode Y as sin( lat ) * sin( long )
 			// decode Z as cos( long )
@@ -354,8 +364,7 @@ int convert_bsp_to_ase(const char *in_name, FILE *in, char *out_name) {
 	j = 1 + (int)floorf(log10f(10240));
 	out_name_buf_len = strlen(out_name) + 1 + i + 1 + j + 4 + 1;
 	out_name_buf = malloc(out_name_buf_len);
-	snprintf(format_buf, sizeof(format_buf), "%%s_%%0%dd_%%0%dd.ase%c", i, j,
-		0);
+	snprintf(format_buf, sizeof(format_buf), "%%s_%%0%dd_%%0%dd.ase%c", i, j, 0);
 	// find and cut the extension off
 	if ((p = strrchr(out_name, '.')) != NULL)
 		*p = 0;
@@ -723,8 +732,8 @@ int convert_md3_to_obj(const char *in_name, FILE *in, FILE *out, int frame) {
 			+ frame * little_long(surf->numVerts));
 		for (j = 0; j < little_long(surf->numVerts); ++j, ++vert) {
 			float lat, lng;
-			lat = (vert->normal >> 8)	/ 255.f * M_PI * 2.f;
-			lng = (vert->normal & 0xFF)	/ 255.f * M_PI * 2.f;
+			lat = (vert->normal >> 8)	/ 255.f * (float)M_PI * 2.f;
+			lng = (vert->normal & 0xFF) / 255.f * (float)M_PI * 2.f;
 			// decode X as cos( lat ) * sin( long )
 			// decode Y as sin( lat ) * sin( long )
 			// decode Z as cos( long )
@@ -799,9 +808,9 @@ int main(int argc, char *argv[]) {
 			retcode = convert_md3_to_ase(argv[1], infile, outfile,
 				argc > 3 ? atoi(argv[3]) : 0);
 		fclose(outfile);
-	} else if (!strcasecmp(in_ext, "bsp"))
+	} else if (!strcasecmp(in_ext, "bsp")) {
 		retcode = convert_bsp_to_ase(argv[1], infile, argv[2]);
-	else {
+	} else {
 		printf("Unknown extension %s in file %s\n", in_ext, argv[1]);
 		retcode = 5;
 	}

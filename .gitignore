@@ -4,6 +4,16 @@
 # Local project files
 *.layout
 *.depend
+*.vcxproj.filters
+*.vcxproj.user
+*.opensdf
+*.sdf
+*.suo
+ipch/
+bin/
+obj/
+Debug/
+Release/
 # Inputs (BSP/MD3)
 *.bsp
 *.md3
