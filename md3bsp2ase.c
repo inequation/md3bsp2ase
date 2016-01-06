@@ -69,37 +69,43 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 	dshader_t *shader;
 	drawVert_t *vert;
 	int *tri;
-	int i, j, k, count;
+	int model_index, surf_index, surf_index_actual, vert_index, vert_index_cum;
+	int count;
 	unsigned char *buf;
 	char *out_name_buf, *p;
 	size_t out_name_buf_len;
 	char format_buf[20];
 	FILE *out;
-	const int skip_planar = 1;
+	// TODO: Promote these to command-line switches.
+	const int split_models = 0;
+	const int skip_planar = 0;
+	const int skip_tris = 0;
+	const int skip_patches = 1;
+	const int skip_collision = 1;
 
 	// load the file contents into a buffer
 	fseek(in, 0, SEEK_END);
-	i = ftell(in);
+	count = ftell(in);
 	fseek(in, 0, SEEK_SET);
-	buf = malloc(i);
+	buf = malloc(count);
 	if (!buf)
 	{
 		printf("Memory allocation failed\n");
 		return 11;
 	}
-	if (fread(buf, 1, i, in) != (size_t)i)
+	if (fread(buf, 1, count, in) != (size_t)count)
 	{
-		printf("Failed to read file (%d bytes) into buffer\n", i);
+		printf("Failed to read file (%d bytes) into buffer\n", count);
 		return 12;
 	}
 
 	// allocate a string buffer large enough to hold the filename extended by
 	// the maximum model index
 	// max length of model index
-	i = 1 + (int)floorf(log10f(MAX_MAP_MODELS));
+	model_index = 1 + (int)floorf(log10f(MAX_MAP_MODELS));
 	// max length of surface index
-	j = 1 + (int)floorf(log10f(10240));
-	out_name_buf_len = strlen(out_name) + 1 + i + 1 + j + 4 + 1;
+	surf_index = 1 + (int)floorf(log10f(10240));
+	out_name_buf_len = strlen(out_name) + 1 + model_index + 1 + surf_index + 4 + 1;
 	out_name_buf = malloc(out_name_buf_len);
 	// MSVC is retarded and disallows just #defining snprintf.
 #if _MSC_VER
@@ -107,7 +113,9 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 #else
 	snprintf
 #endif
-		(format_buf, sizeof(format_buf), "%%s_%%0%dd_%%0%dd.obj%c", i, j, 0);
+		(format_buf, sizeof(format_buf),
+			split_models ? "%%s_%%0%dd_%%0%dd.obj\x00" : "%%s_%%0%dd.obj\x00",
+			model_index, surf_index);
 	// find and cut the extension off
 	if ((p = strrchr(out_name, '.')) != NULL)
 		*p = 0;
@@ -128,33 +136,37 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 	}
 
 	// iterate over all the models
-	for (i = 0, model = (dmodel_t *)(buf
+	for (model_index = 0, model = (dmodel_t *)(buf
 		+ little_long(bsp->lumps[LUMP_MODELS].fileofs));
-		i < little_long(bsp->lumps[LUMP_MODELS].filelen)
+		model_index < little_long(bsp->lumps[LUMP_MODELS].filelen)
 		/ (int)sizeof(dmodel_t);
-		++i, ++model)
+		++model_index, ++model)
 	{
 
-		if (little_long(model->numSurfaces) < 1)
+		if (little_long(model->numSurfaces) < 1
+			&& (skip_collision || little_long(model->numBrushes) < 1))
 		{
-			//printf("\tNo surfaces in model %d, skipping\n", i);
 			continue;
 		}
 
 		// count exportable surfaces
-		for (j = 0, count = 0, surf = (dsurface_t *)(buf
+		for (surf_index = 0, count = 0, surf = (dsurface_t *)(buf
 			+ little_long(bsp->lumps[LUMP_SURFACES].fileofs)
 			+ little_long(model->firstSurface) * sizeof(dsurface_t));
-		j < little_long(model->numSurfaces);
-		++j, ++surf)
+			surf_index < little_long(model->numSurfaces);
+			++surf_index, ++surf)
 		{
-			if (skip_planar && little_long(surf->surfaceType) == MST_PLANAR)
+			if ((skip_planar && little_long(surf->surfaceType) == MST_PLANAR)
+				|| (skip_tris && little_long(surf->surfaceType) == MST_TRIANGLE_SOUP)
+				|| (skip_patches && little_long(surf->surfaceType) == MST_PATCH))
 			{
 				continue;
 			}
-			else if (little_long(surf->surfaceType) != MST_TRIANGLE_SOUP)
+			else if (little_long(surf->surfaceType) != MST_PLANAR
+				&& little_long(surf->surfaceType) != MST_TRIANGLE_SOUP
+				&& little_long(surf->surfaceType) != MST_PATCH)
 			{
-				static char warned[sizeof(char) * 8] = { 0 };
+				static char warned[1 << (sizeof(char) * 8)] = { 0 };
 				if (surf->surfaceType > sizeof(warned) || !warned[surf->surfaceType])
 				{
 					warned[surf->surfaceType] = 1;
@@ -174,55 +186,91 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 			continue;
 		}
 
-		printf("Processing model #%d: %d exportable surfaces\n", i, count);
+		printf("Processing model #%d: %d exportable surfaces\n", model_index, count);
 
-		// iterate over all the BSP drawable surfaces
-		for (j = 0, surf = (dsurface_t *)(buf
-			+ little_long(bsp->lumps[LUMP_SURFACES].fileofs)
-			+ little_long(model->firstSurface) * sizeof(dsurface_t));
-			j < little_long(model->numSurfaces);
-			++j, ++surf)
+		if (!split_models)
 		{
-			if (skip_planar && little_long(surf->surfaceType) == MST_PLANAR)
-			{
-				continue;
-			}
-			else if (little_long(surf->surfaceType) != MST_TRIANGLE_SOUP)
-			{
-				// I can only handle triangle soups so far
-				continue;
-			}
-
-			// start the output
-			snprintf(out_name_buf, out_name_buf_len, format_buf, out_name, i, j);
+			// Start the output.
+			snprintf(out_name_buf, out_name_buf_len, format_buf, out_name, model_index);
 			out = fopen(out_name_buf, "w");
 
-			// begin OBJ data
-			fprintf(out, "# generated by md3bsp2ase from %s\n", in_name);
+			// Begin OBJ data.
+			fprintf(out, "# generated by md3bsp2ase from %s model #%d\n", in_name, model_index);
 
-			printf("\tProcessing surface #%d: type %s, %d vertices, "
-				"%d indices\n",
-				j, get_bsp_surface_type(little_long(surf->surfaceType)),
-				little_long(surf->numVerts), little_long(surf->numIndexes));
+			vert_index_cum = 0;
+		}
+		surf_index_actual = 0;
+
+		// iterate over all the BSP drawable surfaces
+		for (surf_index = 0, surf = (dsurface_t *)(buf
+			+ little_long(bsp->lumps[LUMP_SURFACES].fileofs)
+			+ little_long(model->firstSurface) * sizeof(dsurface_t));
+			surf_index < little_long(model->numSurfaces);
+			++surf_index, ++surf)
+		{
+			if ((skip_planar && little_long(surf->surfaceType) == MST_PLANAR)
+				|| (skip_tris && little_long(surf->surfaceType) == MST_TRIANGLE_SOUP)
+				|| (skip_patches && little_long(surf->surfaceType) == MST_PATCH))
+			{
+				continue;
+			}
+			else if (little_long(surf->surfaceType) != MST_PLANAR
+				&& little_long(surf->surfaceType) != MST_TRIANGLE_SOUP
+				&& little_long(surf->surfaceType) != MST_PATCH)
+			{
+				continue;
+			}
 
 			shader = (dshader_t *)(buf
 				+ little_long(bsp->lumps[LUMP_SHADERS].fileofs)
 				+ little_long(surf->shaderNum) * sizeof(dshader_t));
 
+			// Skip non-drawable surfaces (i.e. collision).
+			if (skip_collision && (little_long(shader->surfaceFlags) & SURF_NODRAW))
+			{
+				continue;
+			}
+
+			++surf_index_actual;
+
+			if (split_models)
+			{
+				// Start the surface output.
+				snprintf(out_name_buf, out_name_buf_len, format_buf, out_name, model_index, surf_index);
+				out = fopen(out_name_buf, "w");
+
+				// Begin OBJ data.
+				fprintf(out, "# generated by md3bsp2ase from %s model #%d surface #%d\n", in_name, model_index, surf_index);
+
+				vert_index_cum = 0;
+			}
+
+			printf("\tProcessing surface #%d: type %s, %d vertices, "
+				"%d indices\n",
+				surf_index, get_bsp_surface_type(little_long(surf->surfaceType)),
+				little_long(surf->numVerts), little_long(surf->numIndexes));
+
 			// start a group
 			fprintf(out,
 				"\n"
-				"# surface #%d\n"
-				"g %s\n"
-				"o %s\n"
+				"# surface %d/%d (#%d, %s)\n"
+				"usemtl %s\n"
+				"g surf%d\n"
+				"o surf%d\n"
 				"\n",
-				i, shader->shader, shader->shader);
+				surf_index_actual, count, surf_index, get_bsp_surface_type(little_long(surf->surfaceType)), shader->shader, surf_index, surf_index);
+
+			// Tesselate patches.
+			if (little_long(surf->surfaceType) == MST_PATCH)
+			{
+				// TODO
+			}
 
 			// output the vertex list
 			vert = (drawVert_t *)(buf
 				+ little_long(bsp->lumps[LUMP_DRAWVERTS].fileofs)
 				+ little_long(surf->firstVert) * sizeof(drawVert_t));
-			for (k = 0; k < little_long(surf->numVerts); ++k, ++vert)
+			for (vert_index = 0; vert_index < little_long(surf->numVerts); ++vert_index, ++vert)
 			{
 				fprintf(out,
 					"v %f %f %f\n",
@@ -237,7 +285,7 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 			vert = (drawVert_t *)(buf
 				+ little_long(bsp->lumps[LUMP_DRAWVERTS].fileofs)
 				+ little_long(surf->firstVert) * sizeof(drawVert_t));
-			for (k = 0; k < little_long(surf->numVerts); ++k, ++vert)
+			for (vert_index = 0; vert_index < little_long(surf->numVerts); ++vert_index, ++vert)
 			{
 				fprintf(out, "vt %f %f\n", vert->st[0], 1.f - vert->st[1]);
 			}
@@ -248,7 +296,7 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 			vert = (drawVert_t *)(buf
 				+ little_long(bsp->lumps[LUMP_DRAWVERTS].fileofs)
 				+ little_long(surf->firstVert) * sizeof(drawVert_t));
-			for (k = 0; k < little_long(surf->numVerts); ++k, ++vert)
+			for (vert_index = 0; vert_index < little_long(surf->numVerts); ++vert_index, ++vert)
 			{
 				fprintf(out,
 					"vn %f %f %f\n",
@@ -263,21 +311,32 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 			tri = (int *)(buf
 				+ little_long(bsp->lumps[LUMP_DRAWINDEXES].fileofs)
 				+ little_long(surf->firstIndex) * sizeof(int));
-			for (k = 0; k < little_long(surf->numIndexes) / 3; ++k, tri += 3)
+			for (vert_index = 0; vert_index < little_long(surf->numIndexes) / 3; ++vert_index, tri += 3)
 			{
 				fprintf(out,
 					"f %d/%d/%d %d/%d/%d %d/%d/%d\n",
-					1 + little_long(tri[2]),
-					1 + little_long(tri[2]),
-					1 + little_long(tri[2]),
-					1 + little_long(tri[1]),
-					1 + little_long(tri[1]),
-					1 + little_long(tri[1]),
-					1 + little_long(tri[0]),
-					1 + little_long(tri[0]),
-					1 + little_long(tri[0]));
+					1 + little_long(tri[2]) + vert_index_cum,
+					1 + little_long(tri[2]) + vert_index_cum,
+					1 + little_long(tri[2]) + vert_index_cum,
+					1 + little_long(tri[1]) + vert_index_cum,
+					1 + little_long(tri[1]) + vert_index_cum,
+					1 + little_long(tri[1]) + vert_index_cum,
+					1 + little_long(tri[0]) + vert_index_cum,
+					1 + little_long(tri[0]) + vert_index_cum,
+					1 + little_long(tri[0]) + vert_index_cum);
 			}
 
+			// Keep track of cumulative vertex index so that multiple surfaces in the same file may coexist.
+			vert_index_cum += little_long(surf->numVerts);
+			
+			if (split_models)
+			{
+				fclose(out);
+			}
+		}
+
+		if (!split_models)
+		{
 			fclose(out);
 		}
 	}
