@@ -1,4 +1,4 @@
-Here's a tiny utility that converts MD3 models and drawable geometry from the game levels (BSP files) to the ASE format, so that they may be imported into UDK, for instance.
+Here's a tiny utility that converts MD3 models and drawable geometry from the game levels (BSP files) to the Wavefront OBJ format (formerly to 3dsmax ASCII Scene Export, a.k.a. ASE, but that support has been dropped), so that they may be imported into Unreal Engine 4, for instance.
 
 Will work with other id Tech 3 games, provided you swap in the corresponding qfiles.h header.
 
