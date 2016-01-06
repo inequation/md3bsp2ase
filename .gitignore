@@ -1,0 +1,17 @@
+# Executables and objects
+*.exe
+*.o
+# Local project files
+*.layout
+*.depend
+# Inputs (BSP/MD3)
+*.bsp
+*.md3
+# Program outputs (OBJ/ASE)
+*.obj
+*.ase
+*.mtl
+# Assets
+*.tga
+*.jpg
+*.skin
