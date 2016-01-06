@@ -7,6 +7,7 @@
 *.vcxproj.filters
 *.vcxproj.user
 *.opensdf
+*.opendb
 *.sdf
 *.suo
 ipch/

@@ -5,9 +5,7 @@ Code in the public domain
 */
 
 #ifdef _MSC_VER
-	// Not the prettiest way to do it, but I can't be arsed to "securely" support MSVC.
 	#define _CRT_SECURE_NO_WARNINGS
-	#define snprintf	_snprintf
 	#define strcasecmp	_stricmp
 #endif
 
@@ -385,7 +383,11 @@ int convert_bsp_to_ase(const char *in_name, FILE *in, char *out_name)
 	j = 1 + (int)floorf(log10f(10240));
 	out_name_buf_len = strlen(out_name) + 1 + i + 1 + j + 4 + 1;
 	out_name_buf = malloc(out_name_buf_len);
+#if _MSC_VER
+	_snprintf(format_buf, sizeof(format_buf), "%%s_%%0%dd_%%0%dd.ase%c", i, j, 0);
+#else
 	snprintf(format_buf, sizeof(format_buf), "%%s_%%0%dd_%%0%dd.ase%c", i, j, 0);
+#endif
 	// find and cut the extension off
 	if ((p = strrchr(out_name, '.')) != NULL)
 		*p = 0;
