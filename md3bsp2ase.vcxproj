@@ -12,8 +12,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="md3bsp2ase.c" />
+    <ClCompile Include="wolfet_imports.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="md3bsp2ase.h" />
     <ClInclude Include="qfiles.h" />
     <ClInclude Include="surfaceflags.h" />
   </ItemGroup>

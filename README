@@ -2,6 +2,8 @@ Here's a tiny utility that converts MD3 models and drawable geometry from the ga
 
 Will work with other id Tech 3 games, provided you swap in the corresponding qfiles.h and surfaceflags.h headers.
 
+Unless otherwise noted, all code in this repository is public domain.
+
 Enjoy!
 
 Leszek

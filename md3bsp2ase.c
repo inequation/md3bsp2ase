@@ -1,7 +1,7 @@
 /*
 MD3 and/or BSP to OBJ converter
 Written by Leszek Godlewski <github@inequation.org>
-Code in the public domain
+The code in this file is placed in the public domain.
 */
 
 #ifdef _MSC_VER
@@ -16,15 +16,9 @@ Code in the public domain
 	#define _USE_MATH_DEFINES
 #endif
 #include <math.h>
+#include <assert.h>
 
-typedef float vec_t;
-typedef vec_t vec2_t[2];
-typedef vec_t vec3_t[3];
-typedef vec_t vec4_t[4];
-typedef vec_t vec5_t[5];
-typedef unsigned char byte;
-#include "qfiles.h"
-#include "surfaceflags.h"
+#include "md3bsp2ase.h"
 
 #ifndef BYTE_ORDER
 	#if !defined(LITTLE_ENDIAN) && !defined(BIG_ENDIAN)
@@ -46,6 +40,31 @@ typedef unsigned char byte;
 	#define little_short
 	#define little_long
 #endif // BIG_ENDIAN
+
+float normalize_vector(const vec3_t in, vec3_t out)
+{
+	float length, inv_length;
+
+	length = VectorLength(in);
+	if (length != 0.0f)
+	{
+		inv_length = 1.0f / length;
+		VectorScale(in, inv_length, out);
+	}
+	else
+	{
+		VectorClear(out);
+	}
+
+	return length;
+}
+
+void cross_product(const vec3_t a, const vec3_t b, vec3_t out)
+{
+	out[0] = a[1] * b[2] - a[2] * b[1];
+	out[1] = a[2] * b[0] - a[0] * b[2];
+	out[2] = a[0] * b[1] - a[1] * b[0];
+}
 
 const char *get_bsp_surface_type(mapSurfaceType_t t)
 {
@@ -69,8 +88,8 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 	dshader_t *shader;
 	drawVert_t *vert;
 	int *tri;
-	int model_index, surf_index, surf_index_actual, vert_index, vert_index_cum;
-	int count;
+	int model_index, surf_index, surf_index_actual, vert_index, vert_index_cum, tri_index;
+	int count, vert_count, tri_count;
 	unsigned char *buf;
 	char *out_name_buf, *p;
 	size_t out_name_buf_len;
@@ -80,8 +99,8 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 	const int split_models = 0;
 	const int skip_planar = 0;
 	const int skip_tris = 0;
-	const int skip_patches = 1;
-	const int skip_collision = 1;
+	const int skip_patches = 0;		// WIP
+	const int skip_collision = 1;	// TODO
 
 	// load the file contents into a buffer
 	fseek(in, 0, SEEK_END);
@@ -233,6 +252,88 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 
 			++surf_index_actual;
 
+			vert = (drawVert_t *)(buf
+				+ little_long(bsp->lumps[LUMP_DRAWVERTS].fileofs)
+				+ little_long(surf->firstVert) * sizeof(drawVert_t));
+			vert_count = little_long(surf->numVerts);
+
+			tri = (int *)(buf
+				+ little_long(bsp->lumps[LUMP_DRAWINDEXES].fileofs)
+				+ little_long(surf->firstIndex) * sizeof(int));
+			tri_count = little_long(surf->numIndexes) / 3;
+
+			// Tesselate patches.
+			if (little_long(surf->surfaceType) == MST_PATCH)
+			{
+				srfGridMesh_t *grid;
+				int width_table[MAX_GRID_SIZE], height_table[MAX_GRID_SIZE], lod_width, lod_height;
+				int index, row, column;
+
+				const int subdivisions = 20;	// TODO: Variable LOD. ET values are 4, 12 and 20 for high, medium & low, respectively. Promote to commandline switches or to LOD meshes.
+				const float lod_error = 0.f;// 1.0f / 100000.f;	// TODO: Variable LOD. Promote to commandline switches.
+
+				// TODO: Remove dependency on this GPL-ed code so that all of this project stays in the public domain.
+				// For the time being, call WolfET's subdivision code to get actual tesselated geometry.
+				grid = R_SubdividePatchToGrid(little_long(surf->patchWidth), little_long(surf->patchHeight), vert, subdivisions);
+				
+				width_table[0] = 0;
+				lod_width = 1;
+				for (index = 1; index < grid->width - 1; ++index)
+				{
+					if (grid->widthLodError[index] <= lod_error)
+					{
+						width_table[lod_width++] = index;
+					}
+				}
+				width_table[lod_width++] = grid->width - 1;
+				assert(lod_width <= MAX_GRID_SIZE);
+
+				height_table[0] = 0;
+				lod_height = 1;
+				for (index = 1; index < grid->height - 1; ++index)
+				{
+					if (grid->heightLodError[index] <= lod_error)
+					{
+						height_table[lod_height++] = index;
+					}
+				}
+				height_table[lod_height++] = grid->height - 1;
+				assert(lod_height <= MAX_GRID_SIZE);
+
+				// We've generated new geometry, so create buffers to hold it for the code later on to read.
+				vert_count = lod_height * lod_width;
+				vert = malloc(sizeof(*vert) * vert_count);
+				tri_count = (lod_height - 1) * (lod_width - 1) * 2;
+				tri = malloc(sizeof(*tri) * tri_count * 3);
+
+				for (row = 0; row < lod_height; ++row)
+				{
+					for (column = 0; column < lod_width; ++column)
+					{
+						index = row * lod_width + column;
+						assert(index < vert_count);
+						vert_index = height_table[row] * grid->width + width_table[column];
+						vert[index] = grid->verts[vert_index];
+
+						if (row < lod_height - 1 && column < lod_width - 1)
+						{
+							index = (row * (lod_width - 1) + column) * 6;
+							assert(index + 5 < tri_count * 3);
+							vert_index = row * lod_width + column;
+
+							tri[index + 0] = vert_index;
+							tri[index + 1] = vert_index + lod_width;
+							tri[index + 2] = vert_index + 1;
+
+							tri[index + 3] = vert_index + 1;
+							tri[index + 4] = vert_index + lod_width;
+							tri[index + 5] = vert_index + lod_width + 1;
+						}
+					}
+				}
+				assert(((row - 2) * (lod_width - 1) + (column - 2)) * 6 + 6 == tri_count * 3);
+			}
+
 			if (split_models)
 			{
 				// Start the surface output.
@@ -248,7 +349,7 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 			printf("\tProcessing surface #%d: type %s, %d vertices, "
 				"%d indices\n",
 				surf_index, get_bsp_surface_type(little_long(surf->surfaceType)),
-				little_long(surf->numVerts), little_long(surf->numIndexes));
+				vert_count, tri_count * 3);
 
 			// start a group
 			fprintf(out,
@@ -260,17 +361,8 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 				"\n",
 				surf_index_actual, count, surf_index, get_bsp_surface_type(little_long(surf->surfaceType)), shader->shader, surf_index, surf_index);
 
-			// Tesselate patches.
-			if (little_long(surf->surfaceType) == MST_PATCH)
-			{
-				// TODO
-			}
-
-			// output the vertex list
-			vert = (drawVert_t *)(buf
-				+ little_long(bsp->lumps[LUMP_DRAWVERTS].fileofs)
-				+ little_long(surf->firstVert) * sizeof(drawVert_t));
-			for (vert_index = 0; vert_index < little_long(surf->numVerts); ++vert_index, ++vert)
+			// Output the vertex list.
+			for (vert_index = 0; vert_index < vert_count; ++vert_index, ++vert)
 			{
 				fprintf(out,
 					"v %f %f %f\n",
@@ -285,7 +377,7 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 			vert = (drawVert_t *)(buf
 				+ little_long(bsp->lumps[LUMP_DRAWVERTS].fileofs)
 				+ little_long(surf->firstVert) * sizeof(drawVert_t));
-			for (vert_index = 0; vert_index < little_long(surf->numVerts); ++vert_index, ++vert)
+			for (vert_index = 0; vert_index < vert_count; ++vert_index, ++vert)
 			{
 				fprintf(out, "vt %f %f\n", vert->st[0], 1.f - vert->st[1]);
 			}
@@ -296,7 +388,7 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 			vert = (drawVert_t *)(buf
 				+ little_long(bsp->lumps[LUMP_DRAWVERTS].fileofs)
 				+ little_long(surf->firstVert) * sizeof(drawVert_t));
-			for (vert_index = 0; vert_index < little_long(surf->numVerts); ++vert_index, ++vert)
+			for (vert_index = 0; vert_index < vert_count; ++vert_index, ++vert)
 			{
 				fprintf(out,
 					"vn %f %f %f\n",
@@ -308,10 +400,7 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 				"s 1\n");
 
 			// output the triangle list
-			tri = (int *)(buf
-				+ little_long(bsp->lumps[LUMP_DRAWINDEXES].fileofs)
-				+ little_long(surf->firstIndex) * sizeof(int));
-			for (vert_index = 0; vert_index < little_long(surf->numIndexes) / 3; ++vert_index, tri += 3)
+			for (tri_index = 0; tri_index < tri_count; ++tri_index, tri += 3)
 			{
 				fprintf(out,
 					"f %d/%d/%d %d/%d/%d %d/%d/%d\n",
@@ -327,7 +416,7 @@ int convert_bsp_to_obj(const char *in_name, FILE *in, char *out_name)
 			}
 
 			// Keep track of cumulative vertex index so that multiple surfaces in the same file may coexist.
-			vert_index_cum += little_long(surf->numVerts);
+			vert_index_cum += vert_count;
 			
 			if (split_models)
 			{
